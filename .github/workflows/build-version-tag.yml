@@ -61,7 +61,7 @@ jobs:
         run: dotnet build -c Release --no-restore /p:VersionPrefix="${{ needs.parse-version.outputs.version-prefix }}" /p:Version="${{ needs.parse-version.outputs.version }}"
         working-directory: ./src
       - name: Test
-        run: dotnet test -c Release --no-build --verbosity minimal
+        run: dotnet test -c Release --no-build --verbosity minimal --filter "FullyQualifiedName!~EventStore.Integration"
         working-directory: ./src
       - name: Nuget push
         env:

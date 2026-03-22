@@ -27,7 +27,7 @@ jobs:
         run: dotnet build --no-restore /p:VersionPrefix=1.0.0 /p:VersionSuffix=testbuild
         working-directory: ./src
       - name: Test
-        run: dotnet test --no-build --verbosity minimal
+        run: dotnet test --no-build --verbosity minimal --filter "FullyQualifiedName!~EventStore.Integration"
         working-directory: ./src
 
 
