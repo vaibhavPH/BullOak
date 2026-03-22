@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src
+
+  unit-tests:
+    name: Unit Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src
+
+      - name: Run Unit Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=unit-tests.trx"
+          --results-directory ./TestResults
+          --filter "FullyQualifiedName~Test.Unit"
+        working-directory: ./src
+
+      - name: Upload Unit Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: src/TestResults/*.trx
+          retention-days: 30
+
+  acceptance-tests:
+    name: Acceptance Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src
+
+      - name: Run Acceptance Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=acceptance-tests.trx"
+          --results-directory ./TestResults
+          --filter "FullyQualifiedName~Test.Acceptance"
+        working-directory: ./src
+
+      - name: Upload Acceptance Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-test-results
+          path: src/TestResults/*.trx
+          retention-days: 30
+
+  end-to-end-tests:
+    name: End-to-End Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src
+
+      - name: Run End-to-End Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=e2e-tests.trx"
+          --results-directory ./TestResults
+          --filter "FullyQualifiedName~Test.EndToEnd"
+        working-directory: ./src
+
+      - name: Upload E2E Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: src/TestResults/*.trx
+          retention-days: 30
+
+  eventstore-integration-tests:
+    name: EventStore Integration Tests (Docker)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src/BullOak.Test.EventStore.Integration
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src/BullOak.Test.EventStore.Integration
+
+      - name: Pull EventStoreDB image
+        run: docker pull eventstore/eventstore:latest
+
+      - name: Run Integration Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=integration-tests.trx"
+          --results-directory ./TestResults
+        working-directory: ./src/BullOak.Test.EventStore.Integration
+
+      - name: Upload Integration Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: src/BullOak.Test.EventStore.Integration/TestResults/*.trx
+          retention-days: 30
