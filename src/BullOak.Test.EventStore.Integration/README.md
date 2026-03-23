@@ -29,7 +29,7 @@ Integration test suite that runs a **real EventStoreDB instance** inside Docker 
 
 ## Prerequisites
 
-- **.NET 6.0 SDK** or later
+- **.NET 8.0 SDK** or later
 - **Docker Desktop** running (required for TestContainers)
 - The EventStoreDB Docker image will be pulled automatically on first run
 
@@ -332,9 +332,9 @@ This bridge code is what a production "BullOak.EventStore" adapter package would
 |---------|---------|---------|
 | `Testcontainers` | 4.3.0 | Manages Docker container lifecycle for tests |
 | `EventStore.Client.Grpc.Streams` | 23.3.9 | gRPC client for EventStoreDB (read/write/subscribe) |
-| `EventStore.Client.Grpc.ProjectionManagement` | 23.3.9 | Projection management client |
-| `xunit` | 2.4.1 | Test framework |
-| `FluentAssertions` | 6.12.0 | Readable assertion syntax |
+| `xunit` | 2.9.3 | Test framework |
+| `FluentAssertions` | 6.12.2 | Readable assertion syntax (last free Apache 2.0 version) |
+| `Microsoft.NET.Test.Sdk` | 17.12.0 | Test SDK |
 | `BullOak.Repositories` | (project ref) | Core BullOak event sourcing library |
 
 ---
