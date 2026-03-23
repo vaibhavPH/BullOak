@@ -645,6 +645,7 @@ using (var session = await repo.BeginSessionFor("order-123"))
 | `void AddEvent(object @event)` | Records an event and immediately applies it to the state. |
 | `void AddEvent<TEvent>(Action<TEvent> init)` | Creates an instance of `TEvent` (supports interfaces — BullOak generates a concrete type), temporarily unlocks it for writing, calls your action to initialize it, then locks it and records it. |
 | `void AddEvents(object[] events)` | Records multiple events at once, applying each in order. |
+| `void AddEvents(IEnumerable<object> events)` | Same as above but accepts any enumerable. |
 | `Task<int> SaveChanges(...)` | Validates, publishes, saves. Can be called multiple times. Returns the number of events saved. |
 | `void Dispose()` | Ends the session. Unsaved events are discarded. |
 
@@ -663,13 +664,16 @@ public interface IStartSessions<TEntitySelector, TState>
     //            are replayed. Enables temporal queries ("what was the state on March 10th?").
     Task<IManageSessionOf<TState>> BeginSessionFor(
         TEntitySelector selector,
-        bool throwIfNotExists = false,
+        bool throwIfNotExists,
         DateTime? appliesAt = null);
+    // Note: throwIfNotExists has no default at the interface level.
+    // The InMemoryEventSourcedRepository implementation defaults it to false.
 
     // Delete an aggregate's entire event stream.
     Task Delete(TEntitySelector selector);
 
-    // Check if an aggregate exists (has at least one stored event).
+    // Check if an aggregate exists. Returns true only if the stream
+    // exists AND contains at least one event (not just an empty stream).
     Task<bool> Contains(TEntitySelector selector);
 }
 ```
@@ -1308,20 +1312,20 @@ Interceptors provide four hooks into the event lifecycle, called for **each even
 public class AuditInterceptor : IInterceptEvents
 {
     // Called before the event is published to the message bus
-    public void BeforePublish(object @event, Type eventType, object state, Type stateType)
-        => Console.WriteLine($"[AUDIT] About to publish: {eventType.Name}");
+    public void BeforePublish(object @event, Type typeOfEvent, object state, Type typeOfState)
+        => Console.WriteLine($"[AUDIT] About to publish: {typeOfEvent.Name}");
 
     // Called after successful publication
-    public void AfterPublish(object @event, Type eventType, object state, Type stateType)
-        => Console.WriteLine($"[AUDIT] Published: {eventType.Name}");
+    public void AfterPublish(object @event, Type typeOfEvent, object state, Type typeOfState)
+        => Console.WriteLine($"[AUDIT] Published: {typeOfEvent.Name}");
 
     // Called before the event is persisted to the store
-    public void BeforeSave(object @event, Type eventType, object state, Type stateType)
-        => Console.WriteLine($"[AUDIT] About to save: {eventType.Name}");
+    public void BeforeSave(object @event, Type typeOfEvent, object state, Type typeOfState)
+        => Console.WriteLine($"[AUDIT] About to save: {typeOfEvent.Name}");
 
     // Called after successful persistence
-    public void AfterSave(object @event, Type eventType, object state, Type stateType)
-        => Console.WriteLine($"[AUDIT] Saved: {eventType.Name}");
+    public void AfterSave(object @event, Type typeOfEvent, object state, Type typeOfState)
+        => Console.WriteLine($"[AUDIT] Saved: {typeOfEvent.Name}");
 }
 
 // Register at ANY point in the configuration chain:
@@ -1940,7 +1944,7 @@ All public types in the `BullOak.Repositories` namespace:
 | Type | Kind | Description |
 |------|------|-------------|
 | `IPublishEvents` | interface | Event publisher contract: `Task Publish(ItemWithType, CancellationToken)`, `void PublishSync(ItemWithType)`. |
-| `IInterceptEvents` | interface | Four hooks: `BeforePublish`, `AfterPublish`, `BeforeSave`, `AfterSave`. Each receives the event, its type, the current state, and the state type. |
+| `IInterceptEvents` | interface | Four hooks: `BeforePublish`, `AfterPublish`, `BeforeSave`, `AfterSave`. Each receives `(object @event, Type typeOfEvent, object state, Type typeOfState)`. |
 
 ### Validation
 
