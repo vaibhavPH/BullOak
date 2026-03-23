@@ -68,6 +68,7 @@ An event sourcing library for .NET that provides a complete framework for buildi
   - [Applier Resolution and Caching](#applier-resolution-and-caching)
 - [Key Types Reference](#key-types-reference)
 - [Error Handling](#error-handling)
+- [Interactive Console Showcase](#interactive-console-showcase)
 - [Running the Tests](#running-the-tests)
 - [FAQ](#faq)
 - [Contributing](#contributing)
@@ -2202,6 +2203,74 @@ BullOak throws specific exceptions for different failure scenarios. Here is when
 | `AggregateException` (containing `BusinessException`) | During `SaveChanges()`, when the state validator returns errors. | Catch `AggregateException`, inspect `InnerExceptions` for `BusinessException` instances. Each wraps an `IValidationError`. Report to the user or log. |
 | `PreflightUpconverterConflictException` | During configuration (`.AndNoMoreUpconverters()`), when two upconverters share the same source event type. | Fix the upconverter registration — each source event type can have at most one upconverter. |
 | `Exception("You can only edit this item during reconstitution")` | When application code tries to set a property on an interface-based state object outside of an applier. | This means you're mutating state directly instead of through events. Record an event with `AddEvent()` instead. |
+
+---
+
+## Interactive Console Showcase
+
+The **BullOak.Console** project is a hands-on learning tool that demonstrates every feature of the library through 16 interactive demos. It uses [Spectre.Console](https://spectreconsole.net/) for a rich terminal experience with colored panels, tables, and an interactive menu.
+
+### Running the Console App
+
+```bash
+# Interactive mode — use arrow keys to select a demo, press Enter to run
+dotnet run --project src/BullOak.Console
+
+# Run all 16 demos sequentially
+dotnet run --project src/BullOak.Console -- --run-all
+
+# Run a specific demo by number (e.g., demo 3: Applier Configuration)
+dotnet run --project src/BullOak.Console -- --demo 3
+```
+
+### Available Demos
+
+| # | Demo | What You'll Learn |
+|---|------|-------------------|
+| 1 | Basic Event Sourcing | Configuration builder, repository, session lifecycle, `AddEvent`, `SaveChanges` |
+| 2 | Interface-Based State | Dynamic IL emission, `IBankAccountState`, read-only locking |
+| 3 | Applier Configuration | Four approaches: lambda, class-based, assembly scan, instance list |
+| 4 | Event Upconversion | V1 → V2 → V3 schema evolution with `IUpconvertEvent` |
+| 5 | Event Publishing | Sync/async publishers, `ItemWithType`, null publisher |
+| 6 | Delivery Guarantees | `AtLeastOnce` vs `AtMostOnce` — tradeoffs and when to use each |
+| 7 | Interceptors (Middleware) | `IInterceptEvents` lifecycle hooks, chaining multiple interceptors |
+| 8 | State Validation | `IValidateState<T>`, `ValidationResults`, `BusinessException` |
+| 9 | Optimistic Concurrency | `ConcurrencyException`, retry pattern |
+| 10 | Point-in-Time Queries | `appliesAt` parameter for historical state reconstruction |
+| 11 | Stream Operations | `Contains`, `Delete`, `throwIfNotExists`, `AddEvent` overloads |
+| 12 | Thread Safety | `AlwaysUseThreadSafe`, `NeverUseThreadSafe`, per-type selector |
+| 13 | Cinema Reservation | Second domain example with `Dictionary<string,string>` state |
+| 14 | Full Interactive Workflow | Multi-account bank combining all features |
+| **15** | **PostgreSQL Persistence** | Real PostgreSQL via `PostgreSqlEventSourcedRepository` (Docker or external) |
+| **16** | **EventStoreDB Persistence** | Real EventStoreDB via `EventStoreClient` + BullOak rehydration (Docker or external) |
+
+Demos 1–14 run entirely in-memory with no external dependencies. Demos 15–16 require either **Docker Desktop** (for TestContainers) or an externally running database.
+
+### Configuring Persistence (appsettings.json)
+
+Demos 15 and 16 use `appsettings.json` to decide how to connect to PostgreSQL and EventStoreDB:
+
+```json
+{
+  "Infrastructure": {
+    "PostgreSql": {
+      "UseTestContainers": true,
+      "ConnectionString": "Host=localhost;Port=5432;Database=bulloak_demo;Username=postgres;Password=postgres"
+    },
+    "EventStore": {
+      "UseTestContainers": true,
+      "ConnectionString": "esdb://localhost:2113?tls=false"
+    }
+  }
+}
+```
+
+| Setting | Behavior |
+|---------|----------|
+| `UseTestContainers: true` | A Docker container is started automatically on first use and stays alive until you exit the app. The `ConnectionString` is ignored. |
+| `UseTestContainers: false` | The `ConnectionString` is used to connect to your own running instance. No Docker containers are started. |
+
+This lets you choose between a zero-setup Docker experience or connecting to your existing databases.
 
 ---
 
