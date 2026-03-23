@@ -186,3 +186,44 @@ jobs:
           name: integration-test-results
           path: src/BullOak.Test.EventStore.Integration/TestResults/*.trx
           retention-days: 30
+
+  postgresql-integration-tests:
+    name: PostgreSQL Integration Tests (Docker)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src/BullOak.Test.PostgreSql.Integration
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src/BullOak.Test.PostgreSql.Integration
+
+      - name: Pull PostgreSQL image
+        run: docker pull postgres:16-alpine
+
+      - name: Run PostgreSQL Integration Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=postgresql-tests.trx"
+          --results-directory ./TestResults
+        working-directory: ./src/BullOak.Test.PostgreSql.Integration
+
+      - name: Upload PostgreSQL Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: postgresql-test-results
+          path: src/BullOak.Test.PostgreSql.Integration/TestResults/*.trx
+          retention-days: 30

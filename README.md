@@ -6,6 +6,13 @@
 
 An event sourcing library for .NET that provides a complete framework for building event-sourced aggregates with automatic state reconstitution, optimistic concurrency, event upconversion, and a fluent configuration API.
 
+### Prerequisites
+
+- **.NET 8.0 SDK** ([download](https://dotnet.microsoft.com/download/dotnet/8.0))
+- **A C# IDE** — Visual Studio 2022, VS Code with C# Dev Kit, or JetBrains Rider
+- **Docker Desktop** (only needed for running integration tests — not required for using the library)
+- **PostgreSQL** (only needed if using the PostgreSQL event store in production — Docker is fine for development)
+
 ---
 
 ## Table of Contents
@@ -47,7 +54,12 @@ An event sourcing library for .NET that provides a complete framework for buildi
 - [Configuration Reference](#configuration-reference)
   - [Fluent Builder Chain](#fluent-builder-chain)
   - [Configuration Options](#configuration-options)
-- [Integrating with External Event Stores](#integrating-with-external-event-stores)
+- [PostgreSQL Event Store (Production-Ready)](#postgresql-event-store-production-ready)
+  - [Setup](#setup)
+  - [Usage](#usage)
+  - [How It Works](#how-it-works)
+  - [Custom Serialization](#custom-serialization)
+- [Integrating with Other Event Stores](#integrating-with-other-event-stores)
 - [Project Structure](#project-structure)
 - [How It Works Internally](#how-it-works-internally)
   - [State Rehydration Flow](#state-rehydration-flow)
@@ -139,7 +151,8 @@ Here is what BullOak provides and why each feature matters:
 | **Event publishing** | Hooks into the save lifecycle to publish events to external message buses (RabbitMQ, Kafka, etc.) | Enables event-driven architectures and CQRS read model projections |
 | **Event interception** | Four lifecycle hooks per event (BeforePublish, AfterPublish, BeforeSave, AfterSave) | Cross-cutting concerns like logging, metrics, and auditing without polluting domain code |
 | **State validation** | Enforces business invariants before events are persisted | Invalid state is caught at save time, not after the fact |
-| **In-memory repository** | Complete, working repository implementation included | Great for unit tests, acceptance tests, and prototyping. For production, extend `BaseEventSourcedSession` to plug in any event store. |
+| **PostgreSQL event store** | Production-ready PostgreSQL adapter using Dapper + Npgsql with JSONB storage, optimistic concurrency, and connection pooling | Drop-in replacement for the in-memory repository — same API, backed by a real database |
+| **In-memory repository** | Complete, working in-memory repository implementation | Great for unit tests, acceptance tests, and prototyping |
 
 ---
 
@@ -155,7 +168,7 @@ These terms are used throughout this document and the BullOak codebase:
 | **State** | The current snapshot of an aggregate, derived by replaying all events in its stream. BullOak reconstructs state automatically; you never store it directly. |
 | **Applier** | A function that defines how one event type transforms state. BullOak calls appliers during state reconstitution and when new events are added. Also known as an "event handler" or "projection function." |
 | **Session** | BullOak's unit of work. Represents a single interaction with one aggregate: load state → make decisions → add events → save. Analogous to a database transaction. |
-| **Repository** | Creates sessions and manages the connection to the underlying event store. BullOak includes an in-memory implementation; you extend `BaseEventSourcedSession` for production stores. |
+| **Repository** | Creates sessions and manages the connection to the underlying event store. BullOak includes an in-memory implementation (for tests) and a PostgreSQL implementation (for production). You can also extend `BaseEventSourcedSession` for other stores. |
 | **Rehydration** | The process of reconstructing state from stored events. Also called "reconstitution" or "replay." |
 | **Upconverter** | A transformer that converts old event schemas into current ones at load time, enabling schema evolution without data migration. |
 | **Interceptor** | Middleware that hooks into the event lifecycle (before/after publish, before/after save) for cross-cutting concerns. |
@@ -188,6 +201,7 @@ dotnet add reference ../path/to/BullOak.Repositories/BullOak.Repositories.csproj
 using System.Reflection;
 using BullOak.Repositories;
 using BullOak.Repositories.Appliers;
+using BullOak.Repositories.Config;       // extension methods: WithDefaultCollection, WithNoUpconverters, etc.
 using BullOak.Repositories.InMemory;
 
 // ──────────────────────────────────────────────
@@ -705,7 +719,20 @@ await repo.Delete("order-123");
 repo["order-123"] = new List<(StoredEvent, DateTime)> { /* pre-populate events */ };
 ```
 
-For production use with external stores (EventStoreDB, SQL Server, MongoDB, etc.), you extend `BaseEventSourcedSession<TState>` — see [Integrating with External Event Stores](#integrating-with-external-event-stores).
+For production use, BullOak includes a **PostgreSQL event store** — see [PostgreSQL Event Store](#postgresql-event-store-production-ready). For other stores (EventStoreDB, SQL Server, MongoDB, etc.), you extend `BaseEventSourcedSession<TState>` — see [Integrating with Other Event Stores](#integrating-with-other-event-stores).
+
+**Choosing between InMemory and PostgreSQL:**
+
+| | InMemory | PostgreSQL |
+|---|---------|------------|
+| **Data persisted?** | No — lost when process stops | Yes — survives restarts |
+| **Best for** | Unit tests, acceptance tests, prototyping | Production, staging, integration tests |
+| **Dependencies** | None | PostgreSQL server (or Docker container) |
+| **Stream ID type** | Any (`TId` generic) | `string` only |
+| **Performance** | Fastest (no I/O) | Fast (connection-pooled, batched writes) |
+| **Setup** | Zero config | Call `EnsureSchemaAsync()` once |
+
+Both implementations share the exact same `IStartSessions` API. Code that uses `IStartSessions<string, TState>` can switch between them without any changes — just swap the repository at the composition root.
 
 ---
 
@@ -1515,9 +1542,183 @@ Configuration.Begin()                          → IConfigureEventCollectionType
 
 ---
 
-## Integrating with External Event Stores
+## PostgreSQL Event Store (Production-Ready)
 
-BullOak's in-memory repository is great for testing and prototyping, but for production you need a real event store (EventStoreDB, SQL Server, MongoDB, Cosmos DB, etc.). BullOak provides abstract base classes that handle all the rehydration, publishing, and interception logic — you only need to implement two things: **loading events** and **saving events**.
+BullOak includes a production-ready PostgreSQL event store implementation in the `BullOak.Repositories.PostgreSql` package. It uses **Dapper** for data access and **Npgsql** for the PostgreSQL driver, with built-in connection pooling, optimistic concurrency, and JSONB event storage.
+
+### Setup
+
+**1. Add the project reference:**
+
+```bash
+dotnet add reference ../BullOak.Repositories.PostgreSql/BullOak.Repositories.PostgreSql.csproj
+```
+
+**2. Create the schema** (idempotent — safe to call on every startup):
+
+```csharp
+using Npgsql;
+using BullOak.Repositories.PostgreSql;
+
+var dataSource = NpgsqlDataSource.Create("Host=localhost;Database=myapp;Username=myuser;Password=mypass");
+
+// Creates the events table and indexes if they don't exist
+await PostgreSqlEventStoreSchema.EnsureSchemaAsync(dataSource);
+```
+
+This creates the following table:
+
+```sql
+CREATE TABLE IF NOT EXISTS events (
+    global_position   BIGSERIAL       PRIMARY KEY,        -- total ordering across all streams
+    stream_id         TEXT            NOT NULL,            -- aggregate/stream identifier
+    stream_position   BIGINT          NOT NULL,            -- 0-based position within the stream
+    event_type        TEXT            NOT NULL,            -- assembly-qualified CLR type name
+    event_data        JSONB           NOT NULL,            -- serialized event payload
+    created_at        TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    CONSTRAINT uq_events_stream_position UNIQUE (stream_id, stream_position)
+);
+```
+
+The `UNIQUE(stream_id, stream_position)` constraint is the backbone of optimistic concurrency — if two sessions try to write at the same position, PostgreSQL rejects the second with a unique violation, which BullOak catches and throws as `ConcurrencyException`.
+
+**3. Configure and use:**
+
+```csharp
+using System.Reflection;
+using Npgsql;
+using BullOak.Repositories;
+using BullOak.Repositories.PostgreSql;
+
+// Standard BullOak configuration — identical to InMemory
+var configuration = Configuration.Begin()
+    .WithDefaultCollection()
+    .WithDefaultStateFactory()
+    .NeverUseThreadSafe()
+    .WithNoEventPublisher()
+    .WithAnyAppliersFrom(Assembly.GetExecutingAssembly())
+    .AndNoMoreAppliers()
+    .WithNoUpconverters()
+    .Build();
+
+// Create a PostgreSQL-backed repository instead of InMemory
+var dataSource = NpgsqlDataSource.Create("Host=localhost;Database=myapp;Username=myuser;Password=mypass");
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(configuration, dataSource);
+
+// Usage is identical to InMemory — same API, same patterns
+using (var session = await repo.BeginSessionFor("account-001"))
+{
+    session.AddEvent(new AccountOpened { AccountId = "account-001", InitialDeposit = 100m });
+    await session.SaveChanges();
+}
+
+using (var session = await repo.BeginSessionFor("account-001"))
+{
+    var state = session.GetCurrentState();
+    Console.WriteLine($"Balance: {state.Balance}");  // 100
+}
+```
+
+### Usage
+
+The PostgreSQL repository implements the same `IStartSessions<string, TState>` interface as the in-memory repository. The stream ID type is fixed to `string` (maps to the `TEXT` column in PostgreSQL).
+
+```csharp
+// Constructor options:
+
+// Basic — uses default JsonEventSerializer
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(configuration, dataSource);
+
+// With connection string (creates NpgsqlDataSource internally)
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(configuration, connectionString);
+
+// With custom serializer
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(
+    configuration, dataSource, new MyCustomSerializer());
+
+// With state validator
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(
+    new AccountValidator(), configuration, dataSource);
+
+// Custom table name (default is "events")
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(
+    configuration, dataSource, tableName: "my_events");
+```
+
+**All session operations work identically to InMemory:**
+
+```csharp
+// Create or load aggregate
+using var session = await repo.BeginSessionFor("order-123");
+
+// Throw if aggregate doesn't exist
+using var session = await repo.BeginSessionFor("order-123", throwIfNotExists: true);
+
+// Point-in-time query
+using var session = await repo.BeginSessionFor("order-123", appliesAt: yesterday);
+
+// Check existence / delete
+bool exists = await repo.Contains("order-123");
+await repo.Delete("order-123");
+```
+
+### How It Works
+
+**Connection lifecycle:** The repository and session do NOT hold open database connections. Connections are borrowed from `NpgsqlDataSource`'s built-in pool only during database operations (reading events in `BeginSessionFor`, writing events in `SaveChanges`) and returned immediately. This is safe for long-lived sessions where the user might take time between loading state and saving.
+
+**Optimistic concurrency:** When a session is loaded, it records the last event's `stream_position` as the expected next write position. When `SaveChanges()` is called, events are inserted starting at that position. If another session wrote to the same stream in between, the `UNIQUE(stream_id, stream_position)` constraint causes a PostgreSQL unique violation (`23505`), which is caught and rethrown as `ConcurrencyException`.
+
+**Transaction safety:** All events in a single `SaveChanges()` call are written within a single database transaction (`READ COMMITTED` isolation). Either all events are persisted or none are.
+
+**Thread safety:**
+- The **repository** is fully thread-safe — it holds only immutable state (`NpgsqlDataSource` is thread-safe, `IHoldAllConfiguration` is read-only). Multiple threads can call `BeginSessionFor` concurrently.
+- **Sessions** are NOT thread-safe (same as InMemory) — each logical operation should use its own session.
+
+### Custom Serialization
+
+The default `JsonEventSerializer` uses `System.Text.Json` and stores assembly-qualified type names. To customize serialization, implement `IEventSerializer`:
+
+```csharp
+using BullOak.Repositories.PostgreSql.Serialization;
+
+public class ShortNameSerializer : IEventSerializer
+{
+    private readonly Dictionary<string, Type> _typeMap;
+
+    public ShortNameSerializer()
+    {
+        // Register your event types with short names
+        _typeMap = new Dictionary<string, Type>
+        {
+            ["AccountOpened"] = typeof(AccountOpened),
+            ["MoneyDeposited"] = typeof(MoneyDeposited),
+            ["MoneyWithdrawn"] = typeof(MoneyWithdrawn),
+        };
+    }
+
+    public string Serialize(object @event, Type eventType)
+        => JsonSerializer.Serialize(@event, eventType);
+
+    public object Deserialize(string json, Type eventType)
+        => JsonSerializer.Deserialize(json, eventType)!;
+
+    public string GetTypeName(Type eventType)
+        => eventType.Name;  // stores just "AccountOpened" instead of the full assembly-qualified name
+
+    public Type? GetTypeFromName(string typeName)
+        => _typeMap.GetValueOrDefault(typeName);
+}
+
+// Use it:
+var repo = new PostgreSqlEventSourcedRepository<AccountState>(
+    configuration, dataSource, new ShortNameSerializer());
+```
+
+---
+
+## Integrating with Other Event Stores
+
+BullOak's PostgreSQL adapter covers the most common production scenario, but you may need to integrate with other stores (EventStoreDB, SQL Server, MongoDB, Cosmos DB, etc.). BullOak provides abstract base classes that handle all the rehydration, publishing, and interception logic — you only need to implement two things: **loading events** and **saving events**.
 
 **Extend `BaseEventSourcedSession<TState>`:**
 
@@ -1554,11 +1755,14 @@ public class SqlEventStoreSession<TState> : BaseEventSourcedSession<TState>
     /// Called by the base class during SaveChanges().
     /// This is where you persist new events to your store.
     /// </summary>
+    // Note: the base class signature uses CancellationToken? (nullable)
     protected override async Task<int> SaveChanges(
         ItemWithType[] newEvents,
         TState currentState,
-        CancellationToken cancellationToken)
+        CancellationToken? cancellationToken)
     {
+        var ct = cancellationToken ?? CancellationToken.None;
+
         // Implement optimistic concurrency check
         var currentVersion = await GetStreamVersion(_streamId);
         if (currentVersion != _expectedVersion)
@@ -1568,7 +1772,7 @@ public class SqlEventStoreSession<TState> : BaseEventSourcedSession<TState>
         foreach (var evt in newEvents)
         {
             var json = JsonSerializer.Serialize(evt.instance, evt.type);
-            await InsertEventToSql(_streamId, evt.type.Name, json, cancellationToken);
+            await InsertEventToSql(_streamId, evt.type.Name, json, ct);
         }
 
         _expectedVersion += newEvents.Length;
@@ -1675,6 +1879,14 @@ BullOak/
 │   │   ├── ItemWithType.cs                      # Event + runtime Type struct
 │   │   └── DeliveryTargetGuarntee.cs            # AtLeastOnce / AtMostOnce enum
 │   │
+│   ├── BullOak.Repositories.PostgreSql/          # PostgreSQL event store (Dapper + Npgsql)
+│   │   ├── PostgreSqlEventSourcedRepository.cs   # IStartSessions<string, TState> implementation
+│   │   ├── PostgreSqlEventStoreSession.cs        # BaseEventSourcedSession with Dapper writes
+│   │   ├── PostgreSqlEventStoreSchema.cs         # Idempotent CREATE TABLE / CREATE INDEX
+│   │   └── Serialization/
+│   │       ├── IEventSerializer.cs               # Pluggable serialization contract
+│   │       └── JsonEventSerializer.cs            # System.Text.Json default implementation
+│   │
 │   ├── BullOak.Repositories.Test.Unit/          # 97 unit tests (xUnit + FluentAssertions + FakeItEasy)
 │   │                                            #   Tests: session lifecycle, applier caching, state emission,
 │   │                                            #   upconverter compilation/chaining, interceptor ordering,
@@ -1697,9 +1909,13 @@ BullOak/
 │   │                                            #   Benchmarks: aggregate loading, saving, child entity editing,
 │   │                                            #   applier scaling, custom collection performance
 │   │
-│   └── BullOak.Test.EventStore.Integration/     # 15 EventStoreDB integration tests (Docker + TestContainers)
-│                                                #   Tests: write/read events, subscriptions, projections,
-│                                                #   BullOak state rehydration from EventStoreDB
+│   ├── BullOak.Test.EventStore.Integration/     # 15 EventStoreDB integration tests (Docker + TestContainers)
+│   │                                            #   Tests: write/read events, subscriptions, projections,
+│   │                                            #   BullOak state rehydration from EventStoreDB
+│   │
+│   └── BullOak.Test.PostgreSql.Integration/     # 13 PostgreSQL integration tests (Docker + TestContainers)
+│                                                #   Tests: CRUD, concurrency, serialization round-trip,
+│                                                #   point-in-time queries, append, delete, dispose-without-save
 │
 ├── .github/workflows/ci.yml                     # Unified CI: build → unit/acceptance/e2e/integration tests
 ├── CLAUDE.md                                    # Claude Code project instructions
@@ -2008,6 +2224,10 @@ dotnet test src/BullOak.Test.EndToEnd
 # Spins up a real EventStoreDB instance via TestContainers
 dotnet test src/BullOak.Test.EventStore.Integration
 
+# PostgreSQL integration tests (13 tests — requires Docker Desktop running)
+# Spins up a real PostgreSQL 16 instance via TestContainers
+dotnet test src/BullOak.Test.PostgreSql.Integration
+
 # Run performance benchmarks
 dotnet run -c Release --project src/BullOak.Test.Benchmark
 ```
@@ -2017,7 +2237,7 @@ dotnet run -c Release --project src/BullOak.Test.Benchmark
 ## FAQ
 
 **Q: Do I have to use the in-memory repository?**
-No. The in-memory repository is provided for testing and prototyping. For production, extend `BaseEventSourcedSession<TState>` to integrate with any event store — you only need to implement `LoadFromEvents()` and `SaveChanges()`. See [Integrating with External Event Stores](#integrating-with-external-event-stores).
+No. For production, use the included **PostgreSQL event store** (`BullOak.Repositories.PostgreSql`) — it's a drop-in replacement with the same API. See [PostgreSQL Event Store](#postgresql-event-store-production-ready). For other databases, extend `BaseEventSourcedSession<TState>` — see [Integrating with Other Event Stores](#integrating-with-other-event-stores). The in-memory repository is best suited for unit tests and prototyping.
 
 **Q: Can I use classes instead of interfaces for state?**
 Yes. Classes work fine and are simpler to start with. The advantage of interfaces is that BullOak generates a class with built-in write protection — properties can only be set during event application. This prevents accidental state mutation. With classes, there is no such protection; your discipline must ensure state is only mutated through events.
