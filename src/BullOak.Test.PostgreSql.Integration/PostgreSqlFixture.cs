@@ -17,8 +17,8 @@ public class PostgreSqlFixture : IAsyncLifetime
 
     public PostgreSqlFixture()
     {
-        _container = new PostgreSqlBuilder()
-            .WithImage("postgres:16-alpine")
+        // Image passed to constructor (parameterless ctor is obsolete in 4.11+)
+        _container = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bulloak_test")
             .WithUsername("test")
             .WithPassword("test")
