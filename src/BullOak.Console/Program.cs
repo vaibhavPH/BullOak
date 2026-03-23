@@ -1,4 +1,6 @@
 using BullOak.Console.Demos;
+using BullOak.Console.Infrastructure;
+using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
 // ═══════════════════════════════════════════════════════════════
@@ -13,10 +15,28 @@ using Spectre.Console;
 //    dotnet run -- --run-all     → Run all demos sequentially (non-interactive)
 //    dotnet run -- --demo 3      → Run a specific demo by number
 //
+//  Configuration:
+//    Edit appsettings.json to choose between TestContainers (Docker)
+//    or external database connections for PostgreSQL and EventStoreDB.
+//
 //  Built with Spectre.Console for a rich terminal experience.
 // ═══════════════════════════════════════════════════════════════
 
-var demos = new (string Name, string Description, Func<Task> Action)[]
+// ── Load configuration ─────────────────────────────────────────
+var configuration = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+    .Build();
+
+var infraSettings = new InfrastructureSettings();
+configuration.GetSection("Infrastructure").Bind(infraSettings);
+
+// ── Create infrastructure manager (disposed on exit) ───────────
+await using var infra = new InfrastructureManager(infraSettings);
+
+// ── Define demos ───────────────────────────────────────────────
+// In-memory demos (no external infrastructure needed)
+var inMemoryDemos = new (string Name, string Description, Func<Task> Action)[]
 {
     ("Basic Event Sourcing",
         "Core workflow: configure, create repo, begin session, add events, save",
@@ -75,6 +95,21 @@ var demos = new (string Name, string Description, Func<Task> Action)[]
         FullWorkflowDemo.RunAsync),
 };
 
+// Persistence demos (require Docker or external databases)
+var persistenceDemos = new (string Name, string Description, Func<Task> Action)[]
+{
+    ("PostgreSQL Persistence",
+        $"Real PostgreSQL database ({infra.GetPostgreSqlMode()})",
+        () => PostgreSqlPersistenceDemo.RunAsync(infra)),
+
+    ("EventStoreDB Persistence",
+        $"Real EventStoreDB instance ({infra.GetEventStoreMode()})",
+        () => EventStorePersistenceDemo.RunAsync(infra)),
+};
+
+// Combined list for numbering
+var allDemos = inMemoryDemos.Concat(persistenceDemos).ToArray();
+
 // ── Non-interactive mode: --run-all or --demo N ────────────────
 if (args.Contains("--run-all"))
 {
@@ -85,72 +120,92 @@ if (args.Contains("--run-all"))
 var demoIndex = Array.IndexOf(args, "--demo");
 if (demoIndex >= 0 && demoIndex + 1 < args.Length && int.TryParse(args[demoIndex + 1], out int demoNum))
 {
-    if (demoNum >= 1 && demoNum <= demos.Length)
+    if (demoNum >= 1 && demoNum <= allDemos.Length)
     {
-        var (name, _, action) = demos[demoNum - 1];
+        var (name, _, action) = allDemos[demoNum - 1];
         AnsiConsole.Write(new Rule($"[bold green]Demo {demoNum}: {name}[/]").LeftJustified());
         AnsiConsole.WriteLine();
         await action();
     }
     else
     {
-        AnsiConsole.MarkupLine($"[red]Invalid demo number. Choose 1-{demos.Length}.[/]");
+        AnsiConsole.MarkupLine($"[red]Invalid demo number. Choose 1-{allDemos.Length}.[/]");
     }
     return;
 }
 
 // ── Interactive mode ───────────────────────────────────────────
 ShowHeader();
+ShowInfraStatus();
 
 while (true)
 {
     AnsiConsole.Write(new Rule("[bold yellow]Main Menu[/]").LeftJustified());
     AnsiConsole.WriteLine();
 
-    // Build menu choices: numbered demos + Run All + Exit
+    // Build menu choices with section headers
     var choices = new List<string>();
-    for (int i = 0; i < demos.Length; i++)
-        choices.Add($"{i + 1,2}. {demos[i].Name}");
-    choices.Add("--  Run All Demos");
-    choices.Add("--  Exit");
+
+    // In-memory demos
+    for (int i = 0; i < inMemoryDemos.Length; i++)
+        choices.Add($"{i + 1,2}. {inMemoryDemos[i].Name}");
+
+    // Separator + persistence demos
+    choices.Add("──  [Persistence Demos - Docker/External DB]");
+    for (int i = 0; i < persistenceDemos.Length; i++)
+        choices.Add($"{inMemoryDemos.Length + i + 1,2}. {persistenceDemos[i].Name}");
+
+    // Actions
+    choices.Add("──  [Actions]");
+    choices.Add(">>  Run All In-Memory Demos");
+    choices.Add(">>  Run All Demos (including persistence)");
+    choices.Add(">>  Exit");
 
     var selection = AnsiConsole.Prompt(
         new SelectionPrompt<string>()
             .Title("[bold]Choose a demo to run:[/]")
-            .PageSize(18)
+            .PageSize(22)
             .HighlightStyle(new Style(Color.Blue, decoration: Decoration.Bold))
             .AddChoices(choices)
             .UseConverter(choice =>
             {
-                if (choice.StartsWith("--")) return choice;
-                // Extract index to get description
+                if (choice.StartsWith("──")) return $"[dim]{choice}[/]";
+                if (choice.StartsWith(">>")) return choice;
                 var dotIdx = choice.IndexOf('.');
-                if (dotIdx > 0 && int.TryParse(choice[..dotIdx].Trim(), out int idx) && idx >= 1 && idx <= demos.Length)
-                    return $"{choice}  [dim]— {demos[idx - 1].Description}[/]";
+                if (dotIdx > 0 && int.TryParse(choice[..dotIdx].Trim(), out int idx) && idx >= 1 && idx <= allDemos.Length)
+                    return $"{choice}  [dim]— {allDemos[idx - 1].Description}[/]";
                 return choice;
             }));
 
-    if (selection == "--  Exit")
+    // Handle section headers (not selectable, just re-prompt)
+    if (selection.StartsWith("──"))
+        continue;
+
+    if (selection == ">>  Exit")
     {
-        AnsiConsole.MarkupLine("[dim]Goodbye![/]");
+        AnsiConsole.MarkupLine("[dim]Shutting down...[/]");
         break;
     }
 
     AnsiConsole.Clear();
 
-    if (selection == "--  Run All Demos")
+    if (selection == ">>  Run All In-Memory Demos")
+    {
+        await RunDemos(inMemoryDemos, "In-Memory");
+    }
+    else if (selection == ">>  Run All Demos (including persistence)")
     {
         await RunAllDemos();
     }
     else
     {
-        // Parse selected demo number
         var dotPos = selection.IndexOf('.');
-        if (dotPos > 0 && int.TryParse(selection[..dotPos].Trim(), out int selectedIdx) && selectedIdx >= 1 && selectedIdx <= demos.Length)
+        if (dotPos > 0 && int.TryParse(selection[..dotPos].Trim(), out int selectedIdx)
+            && selectedIdx >= 1 && selectedIdx <= allDemos.Length)
         {
             try
             {
-                await demos[selectedIdx - 1].Action();
+                await allDemos[selectedIdx - 1].Action();
             }
             catch (Exception ex)
             {
@@ -164,16 +219,31 @@ while (true)
     System.Console.ReadKey(intercept: true);
     AnsiConsole.Clear();
     ShowHeader();
+    ShowInfraStatus();
 }
 
 // ── Helper methods ─────────────────────────────────────────────
 
 async Task RunAllDemos()
 {
-    for (int i = 0; i < demos.Length; i++)
+    await RunDemos(inMemoryDemos, "In-Memory");
+    AnsiConsole.WriteLine();
+    await RunDemos(persistenceDemos, "Persistence", startIndex: inMemoryDemos.Length);
+    AnsiConsole.MarkupLine("[bold green]All demos completed![/]");
+}
+
+async Task RunDemos(
+    (string Name, string Description, Func<Task> Action)[] demoList,
+    string sectionLabel,
+    int startIndex = 0)
+{
+    AnsiConsole.Write(new Rule($"[bold green]{sectionLabel} Demos[/]").LeftJustified());
+    AnsiConsole.WriteLine();
+
+    for (int i = 0; i < demoList.Length; i++)
     {
-        var (name, _, action) = demos[i];
-        AnsiConsole.Write(new Rule($"[bold green]Demo {i + 1}: {name}[/]").LeftJustified());
+        var (name, _, action) = demoList[i];
+        AnsiConsole.Write(new Rule($"[bold green]Demo {startIndex + i + 1}: {name}[/]").LeftJustified());
         AnsiConsole.WriteLine();
 
         try
@@ -189,8 +259,6 @@ async Task RunAllDemos()
         AnsiConsole.Write(new Rule().RuleStyle(Style.Parse("dim")));
         AnsiConsole.WriteLine();
     }
-
-    AnsiConsole.MarkupLine("[bold green]All demos completed successfully![/]");
 }
 
 void ShowHeader()
@@ -202,5 +270,26 @@ void ShowHeader()
     AnsiConsole.WriteLine();
     AnsiConsole.Write(new Markup("[dim]Navigate with arrow keys, press Enter to select. Or use: --run-all | --demo N[/]").Centered());
     AnsiConsole.WriteLine();
+    AnsiConsole.WriteLine();
+}
+
+void ShowInfraStatus()
+{
+    var table = new Table().Border(TableBorder.Rounded).Expand();
+    table.AddColumn("[bold]Infrastructure[/]");
+    table.AddColumn("[bold]Mode[/]");
+    table.AddColumn("[bold]Status[/]");
+
+    table.AddRow(
+        "PostgreSQL",
+        infra.GetPostgreSqlMode(),
+        infra.IsPostgreSqlInitialized ? "[green]Running[/]" : "[dim]Not started (starts on first use)[/]");
+
+    table.AddRow(
+        "EventStoreDB",
+        infra.GetEventStoreMode(),
+        infra.IsEventStoreInitialized ? "[green]Running[/]" : "[dim]Not started (starts on first use)[/]");
+
+    AnsiConsole.Write(table);
     AnsiConsole.WriteLine();
 }
