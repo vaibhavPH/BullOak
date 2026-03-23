@@ -151,12 +151,12 @@ while (true)
         choices.Add($"{i + 1,2}. {inMemoryDemos[i].Name}");
 
     // Separator + persistence demos
-    choices.Add("──  [Persistence Demos - Docker/External DB]");
+    choices.Add("──  [[Persistence Demos - Docker/External DB]]");
     for (int i = 0; i < persistenceDemos.Length; i++)
         choices.Add($"{inMemoryDemos.Length + i + 1,2}. {persistenceDemos[i].Name}");
 
     // Actions
-    choices.Add("──  [Actions]");
+    choices.Add("──  [[Actions]]");
     choices.Add(">>  Run All In-Memory Demos");
     choices.Add(">>  Run All Demos (including persistence)");
     choices.Add(">>  Exit");
