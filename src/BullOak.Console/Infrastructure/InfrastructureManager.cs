@@ -60,7 +60,7 @@ public class InfrastructureManager : IAsyncDisposable
                         .WithDatabase("bulloak_demo")
                         .WithUsername("demo")
                         .WithPassword("demo")
-                        .WithCommand("postgres", "-c", "log_statement=all")
+                        .WithCommand("-c", "log_statement=all")
                         .Build();
 
                     await _pgContainer.StartAsync();
