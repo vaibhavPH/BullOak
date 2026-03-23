@@ -56,10 +56,11 @@ public class InfrastructureManager : IAsyncDisposable
                 .Spinner(Spinner.Known.Dots)
                 .StartAsync("[yellow]Starting PostgreSQL TestContainer...[/]", async ctx =>
                 {
-                    _pgContainer = new PostgreSqlBuilder("postgres:16-alpine")
+                    _pgContainer = new PostgreSqlBuilder("postgres:latest")
                         .WithDatabase("bulloak_demo")
                         .WithUsername("demo")
                         .WithPassword("demo")
+                        .WithCommand("postgres", "-c", "log_statement=all")
                         .Build();
 
                     await _pgContainer.StartAsync();
@@ -105,6 +106,7 @@ public class InfrastructureManager : IAsyncDisposable
                 .WithEnvironment("EVENTSTORE_RUN_PROJECTIONS", "All")
                 .WithEnvironment("EVENTSTORE_START_STANDARD_PROJECTIONS", "true")
                 .WithEnvironment("EVENTSTORE_MEM_DB", "true")
+                .WithEnvironment("EVENTSTORE_ENABLE_ATOM_PUB_OVER_HTTP","true")
                 .WithWaitStrategy(Wait.ForUnixContainer()
                     .UntilHttpRequestIsSucceeded(r => r
                         .ForPort(KurrentDbBuilder.KurrentDbPort)
