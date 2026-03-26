@@ -227,3 +227,85 @@ jobs:
           name: postgresql-test-results
           path: src/BullOak.Test.PostgreSql.Integration/TestResults/*.trx
           retention-days: 30
+
+  readmodel-integration-tests:
+    name: Read Model Integration Tests (Docker)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src/BullOak.Test.ReadModel.Integration
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src/BullOak.Test.ReadModel.Integration
+
+      - name: Pull PostgreSQL image
+        run: docker pull postgres:16-alpine
+
+      - name: Run Read Model Integration Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=readmodel-tests.trx"
+          --results-directory ./TestResults
+        working-directory: ./src/BullOak.Test.ReadModel.Integration
+
+      - name: Upload Read Model Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readmodel-test-results
+          path: src/BullOak.Test.ReadModel.Integration/TestResults/*.trx
+          retention-days: 30
+
+  rabbitmq-integration-tests:
+    name: RabbitMQ Integration Tests (Docker)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: ./src/BullOak.Test.RabbitMq.Integration
+
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: ./src/BullOak.Test.RabbitMq.Integration
+
+      - name: Pull RabbitMQ image
+        run: docker pull rabbitmq:3-management-alpine
+
+      - name: Run RabbitMQ Integration Tests
+        run: >
+          dotnet test
+          --no-build
+          --verbosity normal
+          --logger "trx;LogFileName=rabbitmq-tests.trx"
+          --results-directory ./TestResults
+        working-directory: ./src/BullOak.Test.RabbitMq.Integration
+
+      - name: Upload RabbitMQ Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rabbitmq-test-results
+          path: src/BullOak.Test.RabbitMq.Integration/TestResults/*.trx
+          retention-days: 30
