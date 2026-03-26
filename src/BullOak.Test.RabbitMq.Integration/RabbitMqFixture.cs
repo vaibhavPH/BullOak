@@ -26,6 +26,8 @@ public class RabbitMqFixture : IAsyncLifetime
 
     public RabbitMqFixture()
     {
+        // RabbitMqBuilder includes a built-in health check that waits for the
+        // AMQP port (5672) to accept connections before StartAsync completes.
         _container = new RabbitMqBuilder("rabbitmq:3-management-alpine")
             .WithUsername("guest")
             .WithPassword("guest")

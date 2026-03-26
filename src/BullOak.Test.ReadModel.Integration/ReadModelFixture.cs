@@ -24,6 +24,8 @@ public class ReadModelFixture : IAsyncLifetime
 
     public ReadModelFixture()
     {
+        // PostgreSqlBuilder includes a built-in health check that waits for
+        // the database to accept connections before StartAsync completes.
         _container = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("bulloak_readmodel_test")
             .WithUsername("test")

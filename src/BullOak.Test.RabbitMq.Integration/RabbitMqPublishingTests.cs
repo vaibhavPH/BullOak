@@ -67,7 +67,7 @@ public class RabbitMqPublishingTests
         var receivedEvents = new List<AccountOpened>();
         var eventReceived = new TaskCompletionSource<bool>();
 
-        using var provider = await BuildServiceProviderAsync(cfg =>
+        await using var provider = await BuildServiceProviderAsync(cfg =>
         {
             cfg.AddConsumer<TestAccountOpenedConsumer>();
 
@@ -132,7 +132,7 @@ public class RabbitMqPublishingTests
         var allEventsReceived = new TaskCompletionSource<bool>();
         var expectedEventCount = 2;
 
-        using var provider = await BuildServiceProviderAsync(cfg =>
+        await using var provider = await BuildServiceProviderAsync(cfg =>
         {
             cfg.AddConsumer<TestAllEventsConsumer>();
 
@@ -221,7 +221,7 @@ public class RabbitMqPublishingTests
         var consumer2Events = new List<AccountOpened>();
         var consumer2Done = new TaskCompletionSource<bool>();
 
-        using var provider = await BuildServiceProviderAsync(cfg =>
+        await using var provider = await BuildServiceProviderAsync(cfg =>
         {
             cfg.AddConsumer<FanoutConsumer1>();
             cfg.AddConsumer<FanoutConsumer2>();
@@ -297,7 +297,7 @@ public class RabbitMqPublishingTests
         var depositEvents = new List<MoneyDeposited>();
         var depositDone = new TaskCompletionSource<bool>();
 
-        using var provider = await BuildServiceProviderAsync(cfg =>
+        await using var provider = await BuildServiceProviderAsync(cfg =>
         {
             cfg.AddConsumer<TypedAccountOpenedConsumer>();
             cfg.AddConsumer<TypedMoneyDepositedConsumer>();
@@ -517,11 +517,34 @@ public class RabbitMqPublishingTests
     public record ExpectedEventCount(int Count);
 
     /// <summary>
+    /// Wraps a ServiceProvider and implements IAsyncDisposable so it can be used
+    /// with "await using". MassTransit registers IAsyncDisposable services (UsageTracker),
+    /// which means the ServiceProvider must be disposed asynchronously.
+    /// </summary>
+    private sealed class AsyncServiceProvider : IAsyncDisposable
+    {
+        private readonly ServiceProvider _provider;
+
+        public AsyncServiceProvider(ServiceProvider provider) => _provider = provider;
+
+        public T GetRequiredService<T>() where T : notnull
+            => _provider.GetRequiredService<T>();
+
+        public async ValueTask DisposeAsync()
+        {
+            // Stop the bus gracefully before disposing
+            var busControl = _provider.GetRequiredService<IBusControl>();
+            await busControl.StopAsync();
+            await _provider.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// Builds a service provider with MassTransit and RabbitMQ configured.
     /// Starts the bus and waits for consumers to bind before returning.
-    /// Caller must dispose the provider to stop the bus gracefully.
+    /// Returns an IAsyncDisposable wrapper — use "await using" to dispose.
     /// </summary>
-    private static async Task<ServiceProvider> BuildServiceProviderAsync(
+    private static async Task<AsyncServiceProvider> BuildServiceProviderAsync(
         Action<IBusRegistrationConfigurator> configureMassTransit,
         Action<IServiceCollection>? configureServices = null)
     {
@@ -539,7 +562,7 @@ public class RabbitMqPublishingTests
         // Give consumers time to bind to queues
         await Task.Delay(1000);
 
-        return provider;
+        return new AsyncServiceProvider(provider);
     }
 
     #endregion
