@@ -66,6 +66,8 @@ Docker-based tests give you **confidence that your code works end-to-end** again
 | **PostgreSQL Client** | `Npgsql` | 8.0.6 | .NET PostgreSQL driver |
 | **Micro ORM** | `Dapper` | 2.1.35 | Lightweight SQL mapping |
 | **EventStore Client** | `EventStore.Client.Grpc.Streams` | 23.3.9 | gRPC client for EventStoreDB |
+| **RabbitMQ Container** | `Testcontainers.RabbitMq` | 4.11.0 | Manages RabbitMQ Docker container |
+| **MassTransit** | `MassTransit.RabbitMQ` | 8.4.0 | .NET messaging framework with RabbitMQ transport |
 | **Test SDK** | `Microsoft.NET.Test.Sdk` | 17.12.0 | .NET test infrastructure |
 
 ---
