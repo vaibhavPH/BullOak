@@ -6,6 +6,8 @@
 
 An event sourcing library for .NET that provides a complete framework for building event-sourced aggregates with automatic state reconstitution, optimistic concurrency, event upconversion, and a fluent configuration API.
 
+> 📊 **New here? Start with the visuals.** See **[Architecture Diagrams](docs/architecture.md)** — seven colour-coded Mermaid diagrams covering system context, core components, class relationships, load/save sequences, the project graph, and the CI pipeline. This is the fastest way to build a mental model before diving into the prose below.
+
 ### Prerequisites
 
 - **.NET 8.0 SDK** ([download](https://dotnet.microsoft.com/download/dotnet/8.0))
@@ -17,6 +19,7 @@ An event sourcing library for .NET that provides a complete framework for buildi
 
 ## Table of Contents
 
+- [Architecture Diagrams](docs/architecture.md) *(visual overview — recommended entry point)*
 - [What Is Event Sourcing?](#what-is-event-sourcing)
   - [Traditional (CRUD) vs Event Sourcing](#traditional-crud-vs-event-sourcing)
   - [A Real-World Analogy](#a-real-world-analogy)
